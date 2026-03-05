@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+*.secret
+
+# Model checkpoints and binary weights
+*.pt
+*.bin
+*.safetensors
+checkpoints/
+models/checkpoints/
+
+# Benchmark datasets cache
+datasets/cache/
+benchmarks/runs/*/events.jsonl
+
+# Benchmark run artifacts (large, regenerated)
+benchmarks/runs/*/
+
+# Memory data (runtime, not source)
+data/memory/
+
+# Logs
+*.log
+*.jsonl
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db

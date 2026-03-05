@@ -1,0 +1,39 @@
+defaults:
+  baseline_order:
+    - nexus2
+    - rag
+    - llm_only
+baselines:
+  nexus2:
+    module: benchmarks.baselines.nexus2_baseline
+    class: Nexus2Baseline
+    enabled: true
+    config:
+      device: cuda
+      load_checkpoints: true
+  rag:
+    module: benchmarks.baselines.rag_baseline
+    class: RagBaseline
+    enabled: true
+    config:
+      top_k_docs: 5
+  llm_only:
+    module: benchmarks.baselines.phi_only_baseline
+    class: PhiOnlyBaseline
+    enabled: true
+    config:
+      answer_style: concise
+  nexus1:
+    module: benchmarks.baselines.nexus1_baseline
+    class: Nexus1Baseline
+    enabled: false
+    config:
+      device: cuda
+
+  # Deprecated — kept for backward compat with old run replay
+  phi_only:
+    module: benchmarks.baselines.phi_only_baseline
+    class: PhiOnlyBaseline
+    enabled: false
+    config:
+      answer_style: concise

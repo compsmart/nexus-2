@@ -1,0 +1,20 @@
+suite_weights:
+  memory_recall: 0.20
+  multihop: 0.30
+  scalability: 0.15
+  learning_transfer: 0.15
+  composite: 0.20
+
+primary_metric:
+  memory_recall: accuracy
+  multihop: accuracy
+  scalability: accuracy
+  learning_transfer: accuracy
+  composite: composite_score
+
+fallback_metric_keys:
+  - accuracy
+  - exact_match
+  - composite_score
+
+normalize_suite_weights: true

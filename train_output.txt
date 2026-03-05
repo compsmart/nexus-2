@@ -1,0 +1,19 @@
+Device: cuda
+GPU: NVIDIA A100 80GB PCIe
+VRAM: 85.0 GB
+
+Config:
+  encoder_type:   lstm
+  d_key/d_val:    512/512
+  entropy_lambda: 0.01
+  k_schedule:     [5, 10, 20, 50, 100, 200, 350, 500, 750, 1000]
+  checkpoint_dir: nexus2/models/checkpoints
+
+============================================================
+NEXUS-2 Full Training Pipeline
+============================================================
+=== Phase 1: LSTMEncoder Encoder k-Curriculum ===
+
+  [k=5] Starting stage...
+  [k=5 epoch 10/500] loss=1.3967 acc=0.3600
+  [k=5 epoch 20/500] loss=1.3753 acc=0.3600

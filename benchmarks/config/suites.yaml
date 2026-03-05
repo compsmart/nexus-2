@@ -1,0 +1,59 @@
+defaults:
+  profile: standard
+  primary_suite: memory_recall
+  suite_order:
+    - memory_recall
+    - multihop
+    - scalability
+    - learning_transfer
+    - composite
+suites:
+  memory_recall:
+    module: benchmarks.suites.memory_recall
+    class: MemoryRecallSuite
+    enabled: true
+    config:
+      k_values: [10, 25, 50, 100]
+      n_distractors: 5
+      n_queries: 20
+  multihop:
+    module: benchmarks.suites.multihop_chain
+    class: MultihopChainSuite
+    enabled: true
+    config:
+      hop_depths: [2, 3, 4, 5]
+      chains_per_depth: 8
+  scalability:
+    module: benchmarks.suites.scalability
+    class: ScalabilitySuite
+    enabled: true
+    config:
+      k_values: [10, 25, 50, 100, 200, 500]
+      n_queries: 20
+  learning_transfer:
+    module: benchmarks.suites.learning_transfer
+    class: LearningTransferSuite
+    enabled: true
+    config:
+      task_repetitions: 1
+  composite:
+    module: benchmarks.suites.composite
+    class: CompositeSuite
+    enabled: true
+    config:
+      n_facts: 50
+      n_queries: 20
+      category_weights:
+        reasoning: 0.30
+        memory: 0.25
+        multi_hop: 0.25
+        learning: 0.20
+
+  # Deprecated — kept for old run replay
+  vs_rag:
+    module: benchmarks.suites.vs_rag
+    class: VsRagSuite
+    enabled: false
+    config:
+      hop_depths: [1, 2, 3]
+      k_values: [10, 50]
