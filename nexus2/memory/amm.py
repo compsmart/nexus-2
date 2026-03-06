@@ -269,11 +269,40 @@ class AdaptiveModularMemory:
 
     def load(self) -> bool:
         """Load memory from disk. Returns True if loaded."""
-        return load_memory(
+        loaded = load_memory(
             self.bank,
             self.config.memory_json_path,
             self.config.memory_pt_path,
         )
+        if (
+            loaded
+            and self._use_st
+            and self.config.sentence_transformer_reencode_on_load
+        ):
+            self._reencode_snapshot_from_text()
+        return loaded
+
+    def _reencode_snapshot_from_text(self) -> None:
+        """Rebuild persisted vectors from text in SentenceTransformer mode.
+
+        Keys/values in .pt are projection-dependent. Re-encoding from text on load
+        keeps retrieval stable even if process-local projection initialization differs.
+        """
+        _, _, metadata = self.bank.get_snapshot()
+        if not metadata:
+            return
+
+        new_keys: list[torch.Tensor] = []
+        new_values: list[torch.Tensor] = []
+        for entry in metadata:
+            text = (entry.text or "").strip()
+            if not text:
+                text = (entry.subject or "").strip() or "<empty>"
+            key, value = self.encode_text(text)
+            new_keys.append(key.squeeze(0).detach().cpu())
+            new_values.append(value.squeeze(0).detach().cpu())
+
+        self.bank.load_snapshot(new_keys, new_values, metadata)
 
     def use_conv_encoder(self, enable: bool = True):
         """Switch to Conv1D encoder (after distillation)."""

@@ -29,6 +29,9 @@ class NexusConfig:
     sentence_transformer_model: str = "all-MiniLM-L6-v2"  # D-250/D-262: real embeddings for inference
     use_sentence_transformer: bool = True  # D-250: use SentenceTransformer instead of hash+LSTM
     sentence_transformer_dim: int = 384  # output dim of all-MiniLM-L6-v2
+    # Rebuild key/value tensors from persisted text on load when ST mode is enabled.
+    # This avoids retrieval drift across process restarts when projection weights differ.
+    sentence_transformer_reencode_on_load: bool = True
     lstm_hidden: int = 512
     lstm_layers: int = 1
     lstm_bidirectional: bool = False  # MUST stay False

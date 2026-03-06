@@ -259,6 +259,53 @@ class TestAMM:
         assert new_amm.load()
         assert new_amm.size == 1
 
+    def test_sentence_transformer_load_reencodes_vectors(self, tmp_path, monkeypatch):
+        """ST mode should rebuild vectors from text on load to prevent drift."""
+        from nexus2.config import NexusConfig
+        from nexus2.memory.amm import AdaptiveModularMemory
+        from nexus2.memory.persistence import save_memory
+
+        cfg = NexusConfig()
+        cfg.use_sentence_transformer = True
+        cfg.d_key = 4
+        cfg.d_val = 4
+        cfg.memory_json_path = str(tmp_path / "st_mem.json")
+        cfg.memory_pt_path = str(tmp_path / "st_mem.json.pt")
+        cfg.sentence_transformer_reencode_on_load = True
+
+        def _fake_encode(self, text):
+            t = text.lower()
+            if "iron man" in t:
+                k = torch.tensor([[1.0, 0.0, 0.0, 0.0]], dtype=torch.float32)
+            elif "batman" in t:
+                k = torch.tensor([[0.0, 1.0, 0.0, 0.0]], dtype=torch.float32)
+            else:
+                k = torch.tensor([[0.0, 0.0, 1.0, 0.0]], dtype=torch.float32)
+            return k, k.clone()
+
+        # Avoid loading real sentence-transformer model in unit test.
+        monkeypatch.setattr(AdaptiveModularMemory, "_encode_text_st", _fake_encode)
+
+        # Build deliberately wrong persisted vectors (swapped labels).
+        writer = AdaptiveModularMemory(cfg, device="cpu")
+        wrong_iron = torch.tensor([0.0, 1.0, 0.0, 0.0], dtype=torch.float32)  # Batman key
+        wrong_bat = torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32)   # Iron key
+        writer.bank.write(
+            wrong_iron, wrong_iron,
+            text="Iron Man real name is Tony Stark.", mem_type="fact",
+        )
+        writer.bank.write(
+            wrong_bat, wrong_bat,
+            text="Batman real name is Bruce Wayne.", mem_type="fact",
+        )
+        save_memory(writer.bank, cfg.memory_json_path, cfg.memory_pt_path)
+
+        # On load, vectors should be rebuilt from text and retrieval should recover.
+        reader = AdaptiveModularMemory(cfg, device="cpu")
+        assert reader.load()
+        top_text = reader.retrieve("what is iron man real name?", top_k=1)[0][0]
+        assert "Tony Stark" in top_text
+
 
 class TestTextSearch:
     """D-228: Text-based retrieval for hybrid neural+RAG path."""
