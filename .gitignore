@@ -33,6 +33,12 @@ benchmarks/runs/*/
 
 # Memory data (runtime, not source)
 data/memory/
+data/skills/
+data/skills/index.json
+
+# Runtime outputs
+nexus2_server.log
+train_output.txt
 
 # Logs
 *.log

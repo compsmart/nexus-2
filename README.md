@@ -43,6 +43,97 @@ python train.py --phase all      # Run full training pipeline
 python run_benchmark.py           # Run benchmark suite
 ```
 
+## Deployment and Setup
+
+### 1. Prerequisites
+
+- Python 3.10+
+- CUDA-capable GPU recommended for full LLM mode
+- Network access for first-time model downloads (Qwen + sentence-transformers)
+
+### 2. Install
+
+```bash
+git clone <your-repo-url> /opt/nexus-2
+cd /opt/nexus-2
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 3. Optional environment variables
+
+```bash
+# Faster/reliable model pulls from Hugging Face
+export HF_TOKEN=<your_hf_token>
+
+# Enables Gemini-based fact extraction in Info Learner paths
+export GEMINI_API_KEY=<your_gemini_key>
+
+# Pin GPU if needed
+export CUDA_VISIBLE_DEVICES=0
+```
+
+### 4. Start modes
+
+```bash
+# Interactive CLI
+python main.py
+
+# One-shot non-interactive (JSON output)
+python main.py --message "Hello"
+
+# Persistent HTTP server (recommended for production integration)
+python server.py --host 127.0.0.1 --port 8083
+```
+
+### 5. Verify server
+
+```bash
+curl -s http://127.0.0.1:8083/health
+curl -s -X POST http://127.0.0.1:8083/interact \
+  -H "Content-Type: application/json" \
+  -d '{"message":"What is your name?"}'
+```
+
+### 6. Persistence paths (important)
+
+Runtime memory is stored under:
+
+- `data/memory/nexus2_memory.json`
+- `data/memory/nexus2_memory.json.pt`
+
+If you deploy with a process manager (systemd, docker, supervisor), keep a stable working directory (`WorkingDirectory=/opt/nexus-2`) so relative paths resolve correctly.
+
+### 7. Systemd example
+
+```ini
+[Unit]
+Description=NEXUS-2 Agent Server
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nexus-2
+Environment=PYTHONUNBUFFERED=1
+Environment=HF_TOKEN=your_token_here
+Environment=GEMINI_API_KEY=your_key_here
+ExecStart=/opt/nexus-2/.venv/bin/python /opt/nexus-2/server.py --host 127.0.0.1 --port 8083
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 8. Common deployment pitfalls
+
+- First startup can take time due to model downloads.
+- If server returns empty memory behavior unexpectedly, confirm process working directory and memory files under `data/memory/`.
+- Keep `--host 127.0.0.1` unless you explicitly intend external network exposure.
+
 ## Benchmarks
 
 Four benchmark suites evaluate the system against RAG and LLM-only baselines:
