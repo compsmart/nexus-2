@@ -183,9 +183,14 @@ class Nexus2Baseline:
         Searches for "{search_prefix}" in memory and extracts the attribute
         that follows the prefix pattern.
 
-        E.g., search_prefix="Alice likes" → finds "Alice likes red" → returns "red"
-        E.g., search_prefix="Edward plays" → finds "Edward plays the violin" → returns "violin"
+        E.g., search_prefix="Alice likes" -> finds "Alice likes red" -> returns "red"
+        E.g., search_prefix="Edward plays" -> finds "Edward plays the violin" -> returns "violin"
           (skips leading article "the")
+
+        D-413: Zero-LLM shortcuts must be maximally reliable. Falls back to
+        substring search when the fact is embedded inside a larger document
+        (e.g. "Rule B: Alice likes red."), preserving strict startswith as the
+        primary strategy.
         """
         results = self._agent.memory.bank.text_search(search_prefix, top_k=5)
         if not results:
@@ -196,24 +201,35 @@ class Nexus2Baseline:
 
         for text, _score, _entry in results:
             text_lower = text.lower().strip()
+            # Primary: exact prefix match
             if text_lower.startswith(prefix_lower):
-                # Extract the part after the prefix
-                remainder = text[len(prefix_lower):].strip()
-                if remainder:
-                    words = remainder.split()
-                    # Skip leading articles (a, an, the) — e.g. "plays the violin" → "violin"
-                    attr = words[0].rstrip(".,!?")
-                    if attr.lower() in ("a", "an", "the") and len(words) > 1:
-                        attr = words[1].rstrip(".,!?")
-                    if attr:
-                        return attr
+                offset = len(prefix_lower)
+            elif prefix_lower in text_lower:
+                # Fallback: prefix appears inside larger doc (e.g. "Rule X: <fact>")
+                offset = text_lower.find(prefix_lower) + len(prefix_lower)
+            else:
+                continue
+            remainder = text[offset:].strip()
+            if remainder:
+                words = remainder.split()
+                # Skip leading articles (a, an, the) — e.g. "plays the violin" -> "violin"
+                attr = words[0].rstrip(".,!?")
+                if attr.lower() in ("a", "an", "the") and len(words) > 1:
+                    attr = words[1].rstrip(".,!?")
+                if attr:
+                    return attr
 
         return None
 
     def _retrieve_by_prefix(self, search_prefix: str) -> Optional[str]:
-        """Search memory for a fact starting with prefix; return text after prefix.
+        """Search memory for a fact containing prefix; return text after prefix.
 
-        E.g., search_prefix="Emergency protocol token is" → "channel-7"
+        E.g., search_prefix="Emergency protocol token is" -> "channel-7"
+
+        D-413: Falls back to substring search when the fact is embedded inside
+        a larger document (e.g. "Rule C: Emergency protocol token is channel-7."),
+        so that zero-LLM shortcuts handle prefixed facts without falling through
+        to the LLM.
         """
         results = self._agent.memory.bank.text_search(search_prefix, top_k=5)
         if not results:
@@ -221,10 +237,17 @@ class Nexus2Baseline:
         prefix_lower = search_prefix.lower().strip()
         for text, _score, _entry in results:
             text_lower = text.lower().strip()
+            # Primary: exact prefix match
             if text_lower.startswith(prefix_lower):
-                remainder = text[len(prefix_lower):].strip().rstrip(".,!?")
-                if remainder:
-                    return remainder
+                offset = len(prefix_lower)
+            elif prefix_lower in text_lower:
+                # Fallback: prefix appears inside larger doc (e.g. "Rule X: <fact>")
+                offset = text_lower.find(prefix_lower) + len(prefix_lower)
+            else:
+                continue
+            remainder = text[offset:].strip().rstrip(".,!?")
+            if remainder:
+                return remainder
         return None
 
     # ------------------------------------------------------------------
