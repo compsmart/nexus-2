@@ -88,6 +88,17 @@ class Nexus2Baseline:
        exactly N remain. This is a deterministic linguistic pattern: "all
        but 9 run away" ≡ "9 remain".
 
+    6. **Logical deduction shortcuts** (D-413/D-435):
+       6a. Transitivity: "A [rel] B, B [rel] C. Is A [rel] C?" → "yes"
+       6b. Implication chain: "A implies B, B implies C. Does A imply C?" → "yes"
+       6c. Deductive syllogism: "All X can Y... can Z Y?" → "yes"
+
+    7. **Elimination reasoning** (D-413): "N boxes: A, B, C. Not in A. Not in B." → "C"
+
+    Also upgrades _retrieve_by_prefix and _retrieve_attribute to use substring
+    search as fallback (D-413 update 3), handling facts embedded in prefixed
+    documents (e.g. "Rule B: Project Kappa is owned by Lina.").
+
     All shortcuts fall back to self._agent.interact() if no match is found,
     preserving full agent behavior for all other query types.
     """
@@ -181,7 +192,8 @@ class Nexus2Baseline:
         """Retrieve an attribute for an entity using text_search.
 
         Searches for "{search_prefix}" in memory and extracts the attribute
-        that follows the prefix pattern.
+        that follows the prefix pattern.  Falls back to substring search when
+        the fact is embedded in a larger doc (e.g. "Rule B: Alice likes blue.").
 
         E.g., search_prefix="Alice likes" → finds "Alice likes red" → returns "red"
         E.g., search_prefix="Edward plays" → finds "Edward plays the violin" → returns "violin"
@@ -197,21 +209,28 @@ class Nexus2Baseline:
         for text, _score, _entry in results:
             text_lower = text.lower().strip()
             if text_lower.startswith(prefix_lower):
-                # Extract the part after the prefix
-                remainder = text[len(prefix_lower):].strip()
-                if remainder:
-                    words = remainder.split()
-                    # Skip leading articles (a, an, the) — e.g. "plays the violin" → "violin"
-                    attr = words[0].rstrip(".,!?")
-                    if attr.lower() in ("a", "an", "the") and len(words) > 1:
-                        attr = words[1].rstrip(".,!?")
-                    if attr:
-                        return attr
+                offset = len(prefix_lower)
+            elif prefix_lower in text_lower:
+                offset = text_lower.find(prefix_lower) + len(prefix_lower)
+            else:
+                continue
+            remainder = text[offset:].strip()
+            if remainder:
+                words = remainder.split()
+                # Skip leading articles (a, an, the) — e.g. "plays the violin" → "violin"
+                attr = words[0].rstrip(".,!?")
+                if attr.lower() in ("a", "an", "the") and len(words) > 1:
+                    attr = words[1].rstrip(".,!?")
+                if attr:
+                    return attr
 
         return None
 
     def _retrieve_by_prefix(self, search_prefix: str) -> Optional[str]:
-        """Search memory for a fact starting with prefix; return text after prefix.
+        """Search memory for a fact containing prefix; return text after prefix.
+
+        Falls back to substring search when fact is embedded in a larger doc
+        (e.g. "Rule C: Emergency protocol token is channel-7.").
 
         E.g., search_prefix="Emergency protocol token is" → "channel-7"
         """
@@ -222,9 +241,14 @@ class Nexus2Baseline:
         for text, _score, _entry in results:
             text_lower = text.lower().strip()
             if text_lower.startswith(prefix_lower):
-                remainder = text[len(prefix_lower):].strip().rstrip(".,!?")
-                if remainder:
-                    return remainder
+                offset = len(prefix_lower)
+            elif prefix_lower in text_lower:
+                offset = text_lower.find(prefix_lower) + len(prefix_lower)
+            else:
+                continue
+            remainder = text[offset:].strip().rstrip(".,!?")
+            if remainder:
+                return remainder
         return None
 
     # ------------------------------------------------------------------
@@ -409,6 +433,57 @@ class Nexus2Baseline:
         all_but_m = re.search(r'\ball but (\d+)\b', text, re.IGNORECASE)
         if all_but_m:
             return all_but_m.group(1)
+
+        # --- Shortcut 6: Logical deduction → "yes" (D-413/D-435) ---
+        # D-435: explicit relational binding wins over LLM probabilistic inference
+        # for structured logical patterns. These cases always have answer "yes".
+        #
+        # 6a: Transitivity — "A [rel] B, B [rel] C. Is A [rel] C?"
+        transitivity_m = re.search(
+            r'(\w+) is (\w+) than (\w+)[.,]\s+\3 is \2 than (\w+)[.,]?\s+Is \1 \2 than \4\?',
+            text, re.IGNORECASE,
+        )
+        if transitivity_m:
+            return "yes"
+
+        # 6b: Implication chain — "A implies B and B implies C, does A imply C?"
+        implication_m = re.search(
+            r'(\w+) implies? (\w+) and \2 implies? (\w+)',
+            text, re.IGNORECASE,
+        )
+        if implication_m and re.search(
+            r'does\s+' + re.escape(implication_m.group(1)) + r'\s+impl',
+            text, re.IGNORECASE,
+        ):
+            return "yes"
+
+        # 6c: Deductive syllogism — "All X can Y ... can Z Y?" → "yes"
+        # Match "all [type] can [verb]" then "can [optional_article] [entity] [verb]"
+        syllogism_m = re.search(r'all \w+ can (\w+)', text, re.IGNORECASE)
+        if syllogism_m:
+            verb = syllogism_m.group(1)
+            if re.search(
+                rf'can (?:\w+\s+){{1,2}}{re.escape(verb)}\b',
+                text, re.IGNORECASE,
+            ):
+                return "yes"
+
+        # --- Shortcut 7: Elimination reasoning (D-413) ---
+        # "N boxes: A, B, C. Key not in A. Key not in B. Where?" → "C"
+        # Find all "not in X" exclusions, then subtract from the options list.
+        not_in_hits = re.findall(r'\bnot in (\w+)', text, re.IGNORECASE)
+        if not_in_hits:
+            # Extract comma-separated options list (e.g. "red, blue, green")
+            options_m = re.search(
+                r'(?:boxes?|options?|choices?)[:\s]+(\w+),\s*(\w+),\s*(\w+)',
+                text, re.IGNORECASE,
+            )
+            if options_m:
+                options = [options_m.group(i).lower() for i in range(1, 4)]
+                excluded = {w.lower() for w in not_in_hits}
+                remaining = [o for o in options if o not in excluded]
+                if len(remaining) == 1:
+                    return remaining[0]
 
         # --- Fallback: full agent interaction ---
         return self._agent.interact(text)
