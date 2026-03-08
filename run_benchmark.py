@@ -287,7 +287,7 @@ def main():
 
     # Build run spec
     default_suites = ["memory_recall", "multihop", "scalability", "learning_transfer", "composite"]
-    default_baselines = ["nexus2", "rag", "llm_only"]
+    default_baselines = ["nexus2"]
     run_spec = {
         "run_id": run_id,
         "name": args.name,
