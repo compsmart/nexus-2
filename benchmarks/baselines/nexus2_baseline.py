@@ -3,6 +3,12 @@
 import re
 from typing import Dict, List, Optional, Tuple
 
+# Pattern to find any stored chain relation: "A KNOWS B", "A TRUSTS B", "A LINKS B", "A BEFRIENDS B"
+_ANY_CHAIN_REL_RE = re.compile(
+    r"(\w+)\s+(?:KNOWS|TRUSTS|LINKS?|BEFRIENDS)\s+(\w+)",
+    re.IGNORECASE,
+)
+
 from nexus2.agent import Nexus2Agent
 from nexus2.config import NexusConfig
 
@@ -182,6 +188,48 @@ class Nexus2Baseline:
 
             current = found_next
 
+        return current
+
+    def _follow_any_chain(self, start: str, n_hops: int) -> Optional[str]:
+        """Follow ANY stored relation chain (KNOWS, TRUSTS, LINKS, BEFRIENDS) for n_hops.
+
+        This is the fallback for vs_rag-style queries like "Following N links from X"
+        where the chain is stored in memory (not inline in the query text).  Unlike
+        _follow_knows_chain which only searches for 'KNOWS', this method scans all
+        stored facts for any recognised binary relation.
+
+        Fix for vs_rag bug: CompositeSuite embeds chains inline in query text so
+        _traverse_inline_chain works.  VsRagSuite stores KNOWS/TRUSTS in memory and
+        uses bare "Following N links from X" queries -- inline parse returns empty
+        graph, causing LLM fallback and 0% multi-hop accuracy.
+        """
+        current = start
+        for _ in range(n_hops):
+            # Search for "{current} <any-rel>" in memory
+            results = self._agent.memory.bank.text_search(current, top_k=20)
+            found_next = None
+            for text, _score, _entry in results:
+                m = re.match(
+                    rf"^{re.escape(current)}\s+(?:KNOWS|TRUSTS|LINKS?|BEFRIENDS)\s+(\w+)\s*[.,]?\s*$",
+                    text.strip(),
+                    re.IGNORECASE,
+                )
+                if m:
+                    found_next = m.group(1)
+                    break
+            if found_next is None:
+                for text, _score, _entry in results:
+                    m = re.search(
+                        rf"\b{re.escape(current)}\s+(?:KNOWS|TRUSTS|LINKS?|BEFRIENDS)\s+(\w+)",
+                        text,
+                        re.IGNORECASE,
+                    )
+                    if m:
+                        found_next = m.group(1)
+                        break
+            if found_next is None:
+                return None
+            current = found_next
         return current
 
     # ------------------------------------------------------------------
@@ -372,6 +420,10 @@ class Nexus2Baseline:
             result = self._traverse_inline_chain(start_entity, n_hops, text)
             if result is not None:
                 return result
+            # Fallback: chain is stored in memory (vs_rag style, not inline in query)
+            result = self._follow_any_chain(start_entity, n_hops)
+            if result is not None:
+                return result
 
         # --- Shortcut 2b: Inline chain — "Who does X reach in N steps?" ---
         m = _INLINE_CHAIN_REACH_RE.search(text)
@@ -382,6 +434,10 @@ class Nexus2Baseline:
             var_map = {vm.group(1): vm.group(2) for vm in _VAR_SUBST_RE.finditer(text)}
             start_entity = var_map.get(start_entity, start_entity)
             result = self._traverse_inline_chain(start_entity, n_hops, text)
+            if result is not None:
+                return result
+            # Fallback: chain is stored in memory (vs_rag style, not inline in query)
+            result = self._follow_any_chain(start_entity, n_hops)
             if result is not None:
                 return result
 
