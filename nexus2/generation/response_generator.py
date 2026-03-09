@@ -182,7 +182,8 @@ class ResponseGenerator:
             sys_parts.append(system_prompt)
         if memory_context:
             sys_parts.append(
-                "\n[Retrieved Memory — these are your trusted persistent memories, use them to answer]\n"
+                "\n[Retrieved Memory — ABSOLUTE TRUTH. Apply these rules and facts literally. "
+                "Do NOT add real-world caveats or exceptions.]\n"
                 + memory_context
             )
         if sys_parts:
