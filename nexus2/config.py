@@ -16,7 +16,7 @@ class NexusConfig:
     use_4bit: bool = True
     device: str = "auto"  # "auto", "cuda", "cpu"
     max_new_tokens: int = 128
-    temperature: float = 0.6
+    temperature: float = 0.1
     repetition_penalty: float = 1.2
     context_fallback: int = 4096
 
