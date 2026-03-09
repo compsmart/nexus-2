@@ -183,8 +183,6 @@ class ResponseGenerator:
         if memory_context:
             sys_parts.append(
                 "\n[Retrieved Memory — ABSOLUTE TRUTH. Apply these rules and facts literally. "
-                "For yes/no questions, answer ONLY based on what memory says — "
-                "start with 'Yes' or 'No', then explain using the rule. "
                 "Do NOT add real-world caveats or exceptions.]\n"
                 + memory_context
             )
