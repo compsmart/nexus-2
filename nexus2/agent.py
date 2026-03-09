@@ -324,8 +324,8 @@ class Nexus2Agent:
         if can_search and (has_url or has_domain):
             logging.info("[interact] → _search_and_learn (URL/domain detected)")
             response = self._search_and_learn(user_text, system_prompt)
-        elif can_search and (route_level == "reject" or (route_level == "skip" and no_memory)):
-            logging.info("[interact] → _search_and_learn (reject/skip+no_memory)")
+        elif can_search and no_memory:
+            logging.info("[interact] → _search_and_learn (no_memory)")
             response = self._search_and_learn(user_text, system_prompt)
         elif self.generator is not None:
             logging.info("[interact] → generator.generate (memory context)")
@@ -554,15 +554,26 @@ class Nexus2Agent:
         top_k = self.config.retrieval_top_k  # D-261: selective retrieval
         results = self.memory.retrieve(query, top_k=top_k)
 
-        # D-228: Hybrid retrieval — merge text search results
+        # D-228: Hybrid retrieval — merge text search results (knowledge types only).
+        # Use a wide search window (top_k * 10) before filtering: user_input and
+        # agent_response entries score very high on structural query similarity
+        # (shared "what does X like?" patterns) and occupy the top-k slots,
+        # pushing actual facts out of view when top_k is small.
         if self.config.hybrid_retrieval_enabled:
-            text_results = self.memory.bank.text_search(query, top_k=top_k)
-            # Merge: add text results that aren't already in neural results
+            _KNOWLEDGE_TYPES = {"fact", "document", "web_fact", "identity", "correction", "skill"}
+            text_search_k = max(top_k * 10, 30)  # wide window to see past user_input noise
+            text_results = self.memory.bank.text_search(query, top_k=text_search_k)
             neural_texts = {r[0] for r in results} if results else set()
+            added = 0
             for text, score, entry in text_results:
+                if added >= top_k:
+                    break
+                if entry.mem_type not in _KNOWLEDGE_TYPES:
+                    continue  # skip conversational entries that pollute text search
                 if text not in neural_texts:
                     results.append((text, score, entry))
                     neural_texts.add(text)
+                    added += 1
 
         if not results:
             return ""
