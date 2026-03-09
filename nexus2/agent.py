@@ -491,6 +491,54 @@ class Nexus2Agent:
             logging.error("Reasoning chain error: %s", e)
             return None
 
+    # D-264: Detect multi-hop chain queries for iterative bridge retrieval
+    _MULTIHOP_CHAIN_RE = re.compile(
+        r'[Ss]tarting\s+from\s+(\w+).*?following\s+KNOWS\s+links\s+(\d+)\s+times',
+        re.DOTALL,
+    )
+
+    def _build_chain_context(self, query: str) -> str:
+        """Iterative bridge-entity retrieval for multi-hop KNOWS chains (D-264, L-255).
+
+        For queries like "Starting from Alpha, following KNOWS links 3 times, who do
+        you reach?", a single cosine retrieval only finds hop-1. This method iterates:
+        find "Alpha KNOWS X" → extract X → find "X KNOWS Y" → ... → build full chain.
+        """
+        m = self._MULTIHOP_CHAIN_RE.search(query)
+        if not m:
+            return ""
+
+        start_entity = m.group(1)
+        n_hops = int(m.group(2))
+
+        chain_facts = []
+        current = start_entity
+        for _ in range(n_hops):
+            results = self.memory.bank.text_search(f"{current} KNOWS", top_k=5)
+            fact_text = None
+            for text, _score, _entry in results:
+                stripped = text.strip()
+                # Must start with current entity (case-insensitive) followed by KNOWS
+                if stripped.upper().startswith(current.upper() + " KNOWS"):
+                    fact_text = stripped
+                    break
+            if not fact_text:
+                break
+            chain_facts.append(fact_text)
+            # Extract bridge entity: word immediately after KNOWS
+            parts = fact_text.split("KNOWS", 1)
+            if len(parts) == 2:
+                current = parts[1].strip().split()[0]
+            else:
+                break
+
+        if not chain_facts:
+            return ""
+
+        lines = ["[Known Facts]"]
+        lines.extend(f"  {f}" for f in chain_facts)
+        return "\n".join(lines)
+
     def _format_memory_context(self, query: str) -> str:
         """Format retrieved memories as text context for LLM.
 
@@ -498,6 +546,11 @@ class Nexus2Agent:
         merges neural cosine retrieval with keyword-based text search to break
         the 65% constraint ceiling (+20pp on constraint-type queries).
         """
+        # D-264: For multi-hop KNOWS chain queries, use iterative bridge retrieval
+        chain_ctx = self._build_chain_context(query)
+        if chain_ctx:
+            return chain_ctx
+
         top_k = self.config.retrieval_top_k  # D-261: selective retrieval
         results = self.memory.retrieve(query, top_k=top_k)
 
