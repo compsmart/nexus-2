@@ -428,8 +428,7 @@ class Nexus2Agent:
                     _, scores_list, entries = zip(*retrieval_results)
                     retrieval_scores = torch.tensor(list(scores_list))
                     top_entry = entries[0]
-                    import time as _time
-                    top_entry_age = _time.time() - top_entry.timestamp
+                    top_entry_age = time.time() - top_entry.timestamp
                     top_entry_type = top_entry.mem_type
 
                     from nexus2.reasoning.confidence_gate import RouteLevel
@@ -477,7 +476,7 @@ class Nexus2Agent:
         if not results:
             return ""
 
-        groups = {"identity": [], "fact": [], "context": [], "other": []}
+        groups = {"identity": [], "correction": [], "fact": [], "context": [], "other": []}
         seen = set()
 
         for text, score, entry in results:
@@ -487,6 +486,8 @@ class Nexus2Agent:
 
             if entry.mem_type == "identity":
                 groups["identity"].append(text)
+            elif entry.mem_type == "correction":
+                groups["correction"].append(text)
             elif entry.mem_type in ("fact", "document", "web_fact"):
                 groups["fact"].append(text)
             elif entry.mem_type in ("user_input", "agent_response"):
@@ -498,6 +499,9 @@ class Nexus2Agent:
         if groups["identity"]:
             lines.append("[Identity]")
             lines.extend(f"  {t}" for t in groups["identity"])
+        if groups["correction"]:
+            lines.append("[Corrections — these override older facts]")
+            lines.extend(f"  {t}" for t in groups["correction"])
         if groups["fact"]:
             lines.append("[Known Facts]")
             lines.extend(f"  {t}" for t in groups["fact"])

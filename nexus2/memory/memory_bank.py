@@ -505,22 +505,26 @@ class MemoryBank:
         pattern_lower = text_pattern.lower()
         deleted = 0
         with self._lock:
-            i = 0
-            while i < len(self._metadata):
-                entry = self._metadata[i]
-                if pattern_lower in entry.text.lower():
-                    if only_types and entry.mem_type not in only_types:
-                        i += 1
-                        continue
+            surviving_keys = []
+            surviving_values = []
+            surviving_metadata = []
+            for i, entry in enumerate(self._metadata):
+                should_delete = (
+                    pattern_lower in entry.text.lower()
+                    and (not only_types or entry.mem_type in only_types)
+                )
+                if should_delete:
                     self._dedup_dec(entry)
-                    self._keys.pop(i)
-                    self._values.pop(i)
-                    self._metadata.pop(i)
                     deleted += 1
-                    self._dirty = True
                 else:
-                    i += 1
+                    surviving_keys.append(self._keys[i])
+                    surviving_values.append(self._values[i])
+                    surviving_metadata.append(entry)
             if deleted > 0:
+                self._keys = surviving_keys
+                self._values = surviving_values
+                self._metadata = surviving_metadata
+                self._dirty = True
                 self._faiss_rebuild()  # D-295
         return deleted
 
@@ -629,7 +633,10 @@ class MemoryBank:
         each group, and merges clusters above the threshold. Merged entries
         get a centroid key, averaged value, and summary text.
 
-        Identity-type memories are never consolidated.
+        Identity-type and correction-type memories are never consolidated.
+
+        All operations are performed under a single lock acquisition to
+        prevent TOCTOU races with concurrent writes.
 
         Args:
             similarity_threshold: minimum cosine similarity to merge (0.0-1.0)
@@ -641,95 +648,86 @@ class MemoryBank:
             if len(self._keys) < 2:
                 return 0
 
-            # Snapshot current state
             keys = list(self._keys)
             values = list(self._values)
             metadata = list(self._metadata)
 
-        # Group indices by mem_type (skip identity)
-        type_groups: dict[str, list[int]] = {}
-        for i, m in enumerate(metadata):
-            if m.mem_type == "identity":
-                continue
-            type_groups.setdefault(m.mem_type, []).append(i)
-
-        # Find clusters within each type group
-        to_merge: list[list[int]] = []  # each sublist is a cluster of indices
-
-        for mem_type, indices in type_groups.items():
-            if len(indices) < 2:
-                continue
-
-            # Compute pairwise cosine similarity
-            group_keys = torch.stack([keys[i] for i in indices])
-            normed = F.normalize(group_keys, dim=-1)
-            sim_matrix = normed @ normed.T  # [n, n]
-
-            # Greedy clustering: mark visited, group by similarity
-            visited = set()
-            for a_pos in range(len(indices)):
-                if a_pos in visited:
+            # Group indices by mem_type (skip identity and correction)
+            type_groups: dict[str, list[int]] = {}
+            for i, m in enumerate(metadata):
+                if m.mem_type in ("identity", "correction"):
                     continue
-                cluster = [indices[a_pos]]
-                visited.add(a_pos)
-                for b_pos in range(a_pos + 1, len(indices)):
-                    if b_pos in visited:
+                type_groups.setdefault(m.mem_type, []).append(i)
+
+            # Find clusters within each type group
+            to_merge: list[list[int]] = []
+
+            for mem_type, indices in type_groups.items():
+                if len(indices) < 2:
+                    continue
+
+                group_keys = torch.stack([keys[i] for i in indices])
+                normed = F.normalize(group_keys, dim=-1)
+                sim_matrix = normed @ normed.T
+
+                visited = set()
+                for a_pos in range(len(indices)):
+                    if a_pos in visited:
                         continue
-                    if sim_matrix[a_pos, b_pos].item() >= similarity_threshold:
-                        cluster.append(indices[b_pos])
-                        visited.add(b_pos)
-                if len(cluster) >= 2:
-                    to_merge.append(cluster)
+                    cluster = [indices[a_pos]]
+                    visited.add(a_pos)
+                    for b_pos in range(a_pos + 1, len(indices)):
+                        if b_pos in visited:
+                            continue
+                        if sim_matrix[a_pos, b_pos].item() >= similarity_threshold:
+                            cluster.append(indices[b_pos])
+                            visited.add(b_pos)
+                    if len(cluster) >= 2:
+                        to_merge.append(cluster)
 
-        if not to_merge:
-            return 0
+            if not to_merge:
+                return 0
 
-        # Build merged entries and collect indices to remove
-        remove_indices: set[int] = set()
-        new_keys: list[torch.Tensor] = []
-        new_values: list[torch.Tensor] = []
-        new_metadata: list[MemoryEntry] = []
+            # Build merged entries and collect indices to remove
+            remove_indices: set[int] = set()
+            new_keys: list[torch.Tensor] = []
+            new_values: list[torch.Tensor] = []
+            new_metadata: list[MemoryEntry] = []
 
-        for cluster in to_merge:
-            cluster_keys = torch.stack([keys[i] for i in cluster])
-            cluster_values = torch.stack([values[i] for i in cluster])
-            cluster_meta = [metadata[i] for i in cluster]
+            for cluster in to_merge:
+                cluster_keys = torch.stack([keys[i] for i in cluster])
+                cluster_values = torch.stack([values[i] for i in cluster])
+                cluster_meta = [metadata[i] for i in cluster]
 
-            # Centroid key (normalized mean)
-            centroid_key = cluster_keys.mean(dim=0)
-            centroid_key = centroid_key / (centroid_key.norm() + 1e-8)
+                centroid_key = cluster_keys.mean(dim=0)
+                centroid_key = centroid_key / (centroid_key.norm() + 1e-8)
+                avg_value = cluster_values.mean(dim=0)
 
-            # Average value
-            avg_value = cluster_values.mean(dim=0)
+                sorted_by_time = sorted(cluster_meta, key=lambda m: m.timestamp, reverse=True)
+                summary_text = sorted_by_time[0].text
+                source_texts = [m.text for m in sorted_by_time]
 
-            # Build summary text: keep the most recent entry's text as base
-            sorted_by_time = sorted(cluster_meta, key=lambda m: m.timestamp, reverse=True)
-            summary_text = sorted_by_time[0].text
-            source_texts = [m.text for m in sorted_by_time]
+                merged_entry = MemoryEntry(
+                    text=summary_text,
+                    mem_type=sorted_by_time[0].mem_type,
+                    subject=sorted_by_time[0].subject,
+                    timestamp=sorted_by_time[0].timestamp,
+                    access_count=sum(m.access_count for m in cluster_meta),
+                    extra={
+                        "consolidated": True,
+                        "merged_count": len(cluster),
+                        "source_texts": source_texts,
+                    },
+                )
 
-            # Merged metadata
-            merged_entry = MemoryEntry(
-                text=summary_text,
-                mem_type=sorted_by_time[0].mem_type,
-                subject=sorted_by_time[0].subject,
-                timestamp=sorted_by_time[0].timestamp,  # keep most recent
-                access_count=sum(m.access_count for m in cluster_meta),
-                extra={
-                    "consolidated": True,
-                    "merged_count": len(cluster),
-                    "source_texts": source_texts,
-                },
-            )
+                new_keys.append(centroid_key)
+                new_values.append(avg_value)
+                new_metadata.append(merged_entry)
+                remove_indices.update(cluster)
 
-            new_keys.append(centroid_key)
-            new_values.append(avg_value)
-            new_metadata.append(merged_entry)
-            remove_indices.update(cluster)
+            # Rebuild bank: keep non-merged entries + add merged entries
+            total_removed = len(remove_indices) - len(to_merge)
 
-        # Rebuild bank: keep non-merged entries + add merged entries
-        total_removed = len(remove_indices) - len(to_merge)  # net reduction
-
-        with self._lock:
             surviving_keys = []
             surviving_values = []
             surviving_metadata = []
@@ -741,7 +739,6 @@ class MemoryBank:
                 else:
                     self._dedup_dec(self._metadata[i])
 
-            # Add merged entries
             for k, v, m in zip(new_keys, new_values, new_metadata):
                 surviving_keys.append(k)
                 surviving_values.append(v)

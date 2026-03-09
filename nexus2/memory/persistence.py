@@ -45,9 +45,14 @@ def save_memory(bank: MemoryBank, json_path: str, pt_path: Optional[str] = None)
             "extra": entry.extra,
         })
 
+    # Serialize graph edges
+    with bank._lock:
+        edges_snapshot = {k: list(v) for k, v in bank._edges.items()}
+
     json_data = {
         "values": [entry.text for entry in metadata],
         "metadata": meta_dicts,
+        "edges": edges_snapshot,
         _SNAPSHOT_VERSION_KEY: version,
     }
 
@@ -139,15 +144,19 @@ def load_memory(bank: MemoryBank, json_path: str, pt_path: Optional[str] = None)
         ))
 
     bank.load_snapshot(keys, values, metadata)
+
+    # Restore graph edges if present
+    edges = json_data.get("edges", {})
+    if edges:
+        with bank._lock:
+            bank._edges = {k: list(v) for k, v in edges.items()}
+
     return True
 
 
 def _safe_replace(src: str, dst: str):
-    """Replace dst with src, handling Windows where os.rename can fail."""
-    if os.path.exists(dst):
-        os.replace(src, dst)
-    else:
-        os.rename(src, dst)
+    """Atomically replace dst with src. os.replace is atomic on all platforms."""
+    os.replace(src, dst)
 
 
 def _safe_remove(path: str):
