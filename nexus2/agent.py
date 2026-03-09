@@ -554,12 +554,17 @@ class Nexus2Agent:
         top_k = self.config.retrieval_top_k  # D-261: selective retrieval
         results = self.memory.retrieve(query, top_k=top_k)
 
-        # D-228: Hybrid retrieval — merge text search results
+        # D-228: Hybrid retrieval — merge text search results (knowledge types only).
+        # Exclude user_input/agent_response: they score very high on structural
+        # query similarity (shared "what does X like?" patterns), drowning out
+        # actual facts in text search at high k (scalability benchmark root cause).
         if self.config.hybrid_retrieval_enabled:
             text_results = self.memory.bank.text_search(query, top_k=top_k)
-            # Merge: add text results that aren't already in neural results
+            _KNOWLEDGE_TYPES = {"fact", "document", "web_fact", "identity", "correction", "skill"}
             neural_texts = {r[0] for r in results} if results else set()
             for text, score, entry in text_results:
+                if entry.mem_type not in _KNOWLEDGE_TYPES:
+                    continue  # skip conversational entries that pollute text search
                 if text not in neural_texts:
                     results.append((text, score, entry))
                     neural_texts.add(text)
