@@ -324,8 +324,8 @@ class Nexus2Agent:
         if can_search and (has_url or has_domain):
             logging.info("[interact] → _search_and_learn (URL/domain detected)")
             response = self._search_and_learn(user_text, system_prompt)
-        elif can_search and (route_level == "reject" or (route_level == "skip" and no_memory)):
-            logging.info("[interact] → _search_and_learn (reject/skip+no_memory)")
+        elif can_search and no_memory:
+            logging.info("[interact] → _search_and_learn (no_memory)")
             response = self._search_and_learn(user_text, system_prompt)
         elif self.generator is not None:
             logging.info("[interact] → generator.generate (memory context)")

@@ -81,8 +81,11 @@ class ResponseGenerator:
             if route_level == "skip" and reasoning_result.route == "known":
                 route_level = "inject_full"
 
-        # D-227: REJECT route — refuse to answer rather than hallucinate
-        if route_level == "reject":
+        # D-227: REJECT route — refuse to answer rather than hallucinate.
+        # Exception: if text-based memory context is available, use it — the
+        # neural gate may be miscalibrated at high k (many similar-prefix
+        # entities collapse cosine scores), but text search already found facts.
+        if route_level == "reject" and not memory_context:
             return _REJECT_RESPONSE
 
         has_adapter = (
