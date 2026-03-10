@@ -514,14 +514,10 @@ class Nexus2Agent:
         chain_facts = []
         current = start_entity
         for _ in range(n_hops):
-            results = self.memory.bank.text_search(f"{current} KNOWS", top_k=5)
-            fact_text = None
-            for text, _score, _entry in results:
-                stripped = text.strip()
-                # Must start with current entity (case-insensitive) followed by KNOWS
-                if stripped.upper().startswith(current.upper() + " KNOWS"):
-                    fact_text = stripped
-                    break
+            # Use exact prefix scan (D-264 fix): text_search ranking fails when the
+            # chain entity also appears as a target in distractor facts, pushing the
+            # correct source fact beyond top-k. Direct prefix scan is always exact.
+            fact_text = self.memory.bank.find_by_prefix(f"{current} KNOWS")
             if not fact_text:
                 break
             chain_facts.append(fact_text)

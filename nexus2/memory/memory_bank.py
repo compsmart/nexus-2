@@ -626,6 +626,26 @@ class MemoryBank:
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:top_k]
 
+    def find_by_prefix(self, prefix: str) -> Optional[str]:
+        """Find first memory entry whose text starts with prefix (case-insensitive).
+
+        Used by chain traversal to locate "X KNOWS Y" facts without relying on
+        ranked retrieval, which can fail when X also appears as a target in other
+        distractor facts with equal text-match scores.
+
+        Args:
+            prefix: the prefix string to match (e.g. "Alpha KNOWS")
+
+        Returns:
+            The matching entry text, or None if not found.
+        """
+        prefix_upper = prefix.strip().upper()
+        with self._lock:
+            for entry in self._metadata:
+                if entry.text.strip().upper().startswith(prefix_upper):
+                    return entry.text.strip()
+        return None
+
     def consolidate(self, similarity_threshold: float = 0.90) -> int:
         """Cluster similar memories and merge them, freeing slots.
 
